@@ -234,7 +234,7 @@ function update(dt){
     for(const e of enemies){
       if(s.dead||!e.mesh.visible)continue;
       const d=s.mesh.position.distanceTo(new THREE.Vector3(e.mesh.position.x,1,e.mesh.position.z));
-      if(d<e.elite?1.35:.95){
+      const hitRadius=e.elite?1.35:.95;if(d<hitRadius){
         s.dead=true;e.hp--;e.hit=.09;hitFX(s.mesh.position,e.elite);
         if(e.hp<=0){score+=e.elite?75:15;hitFX(e.mesh.position.clone().setY(1),e.elite);e.mesh.visible=false;}
       }
