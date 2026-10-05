@@ -23,6 +23,13 @@ canvas{display:block}
 #help{position:fixed;bottom:15px;left:50%;transform:translateX(-50%);z-index:5;background:rgba(6,10,20,.78);padding:9px 13px;border-radius:10px;border:1px solid rgba(255,255,255,.1);color:#c7d1e5;font-size:13px;white-space:nowrap;pointer-events:none}
 #tag{position:fixed;right:18px;bottom:15px;color:#5feaff;font-size:12px;font-weight:900;letter-spacing:2px;z-index:5;opacity:.8}
 #waveBanner{position:fixed;left:50%;top:16%;transform:translate(-50%,-50%);font-size:46px;font-weight:1000;letter-spacing:7px;text-shadow:0 0 30px #00eaff;z-index:8;opacity:0;pointer-events:none}
+#bossHud{position:fixed;left:50%;top:18px;transform:translateX(-50%);width:min(650px,72vw);z-index:6;pointer-events:none;opacity:0;transition:opacity .2s}
+#bossTitle{text-align:center;font-size:13px;letter-spacing:4px;font-weight:1000;color:#ff77ad;text-shadow:0 0 14px #ff2e75;margin-bottom:5px}
+#bossBar{height:18px;border:2px solid rgba(255,255,255,.2);border-radius:999px;background:#07020aee;overflow:hidden;box-shadow:0 0 30px rgba(255,25,100,.22)}
+#bossFill{height:100%;width:100%;background:linear-gradient(90deg,#ff174f,#ff5c9d,#ffd0df);box-shadow:0 0 20px #ff2f76}
+#stormHud{position:fixed;right:18px;top:18px;z-index:6;pointer-events:none;opacity:0;transition:opacity .2s}
+#stormPill{padding:10px 14px;border:1px solid rgba(120,220,255,.28);background:rgba(5,18,30,.8);border-radius:12px;color:#9ff3ff;font-weight:1000;letter-spacing:2px;box-shadow:0 0 30px rgba(0,210,255,.12)}
+#stormOverlay{position:fixed;inset:0;pointer-events:none;z-index:3;opacity:0;background:linear-gradient(180deg,rgba(38,82,120,.18),rgba(0,0,25,.32))}
 #flash{position:fixed;inset:0;background:radial-gradient(circle,rgba(255,40,75,.05),rgba(255,0,0,.32));opacity:0;z-index:4;pointer-events:none}
 #overlay{position:fixed;inset:0;display:grid;place-items:center;background:rgba(1,3,8,.82);z-index:20;visibility:hidden}
 .card{width:min(460px,calc(100vw - 30px));padding:36px;border-radius:22px;text-align:center;background:linear-gradient(180deg,#141b2c,#080d17);border:1px solid rgba(255,255,255,.14);box-shadow:0 30px 100px #000}
@@ -37,6 +44,9 @@ button:hover{filter:brightness(1.08)}
 <div id="flash"></div>
 <div id="reticle"></div>
 <div id="waveBanner"></div>
+<div id="stormOverlay"></div>
+<div id="bossHud"><div id="bossTitle">⚡ RAID BOSS — STORMBRINGER</div><div id="bossBar"><div id="bossFill"></div></div></div>
+<div id="stormHud"><div id="stormPill">⛈ STORM ACTIVE</div></div>
 <div id="hud">
   <div class="top">
     <div class="panel">❤️ <span id="hp">100</span></div>
@@ -127,6 +137,32 @@ const ring=new THREE.Mesh(
   new THREE.MeshBasicMaterial({color:0x36e8ff})
 );
 ring.rotation.x=Math.PI/2;ring.position.y=.04;scene.add(ring);
+
+const stormOverlay=document.getElementById('stormOverlay');
+const stormHud=document.getElementById('stormHud');
+const bossHud=document.getElementById('bossHud');
+const bossFill=document.getElementById('bossFill');
+
+const rainCount=650;
+const rainPositions=new Float32Array(rainCount*6);
+for(let i=0;i<rainCount;i++){
+  const j=i*6;
+  rainPositions[j]=(Math.random()-.5)*96;
+  rainPositions[j+1]=Math.random()*30;
+  rainPositions[j+2]=(Math.random()-.5)*96;
+  rainPositions[j+3]=rainPositions[j]+.8;
+  rainPositions[j+4]=rainPositions[j+1]-2.3;
+  rainPositions[j+5]=rainPositions[j+2]+.6;
+}
+const rainGeo=new THREE.BufferGeometry();
+rainGeo.setAttribute('position',new THREE.BufferAttribute(rainPositions,3));
+const rain=new THREE.LineSegments(rainGeo,new THREE.LineBasicMaterial({color:0x8edfff,transparent:true,opacity:.3}));
+rain.visible=false;scene.add(rain);
+
+const stormLight=new THREE.DirectionalLight(0x8bcfff,0);
+stormLight.position.set(-20,35,-10);scene.add(stormLight);
+const lightningLight=new THREE.PointLight(0xd7f7ff,0,100);
+lightningLight.position.set(0,24,0);scene.add(lightningLight);
 
 const keys={};
 const mouse={x:innerWidth/2,y:innerHeight/2,down:false};
@@ -227,7 +263,46 @@ function makeEnemy(elite){
   return g;
 }
 
-let player,enemies,bullets,particles,score,wave,spawnRemaining,spawnTimer,fireTimer,gameOver,lastTime,shake,bannerTimer;
+let player,enemies,bullets,enemyBullets,particles,score,wave,spawnRemaining,spawnTimer,fireTimer,gameOver,lastTime,shake,bannerTimer;
+let bossQueued=false,bossShotTimer=0;
+let storm={active:false,timer:14,duration:0,lightning:1.4};
+function spawnRaidBoss(){
+  const g=new THREE.Group();
+  const armorMat=mat(0x232d49,0x170016,.9);
+  const coreMat=mat(0x821846,0x55001e,2.2);
+
+  const core=new THREE.Mesh(new THREE.IcosahedronGeometry(1.9,1),coreMat);
+  core.position.y=2.6;core.castShadow=true;g.add(core);
+
+  const body=new THREE.Mesh(new THREE.BoxGeometry(3.25,2.25,2.2),armorMat);
+  body.position.y=2.25;body.castShadow=true;g.add(body);
+
+  const head=new THREE.Mesh(new THREE.BoxGeometry(2.3,1.18,1.85),mat(0x40172d,0x360016,1.5));
+  head.position.y=4.15;head.castShadow=true;g.add(head);
+
+  const visor=new THREE.Mesh(new THREE.BoxGeometry(1.6,.22,.12),new THREE.MeshBasicMaterial({color:0xffd2e4}));
+  visor.position.set(0,4.18,-.95);g.add(visor);
+
+  for(const sx of [-2,2]){
+    const shoulder=new THREE.Mesh(new THREE.BoxGeometry(.72,2.7,.85),armorMat);
+    shoulder.position.set(sx,2.25,0);
+    shoulder.rotation.z=sx>0?-.12:.12;
+    shoulder.castShadow=true;g.add(shoulder);
+    const claw=new THREE.Mesh(new THREE.CylinderGeometry(.48,.58,1.1,8),coreMat);
+    claw.rotation.x=Math.PI/2;claw.position.set(sx,1.0,-.2);claw.castShadow=true;g.add(claw);
+  }
+
+  const energyRing=new THREE.Mesh(new THREE.TorusGeometry(2.95,.11,10,56),new THREE.MeshBasicMaterial({color:0xff3b88}));
+  energyRing.rotation.x=Math.PI/2;energyRing.position.y=2.7;g.add(energyRing);
+
+  const shadow=new THREE.Mesh(new THREE.CircleGeometry(3.2,40),new THREE.MeshBasicMaterial({color:0x000000,transparent:true,opacity:.52}));
+  shadow.rotation.x=-Math.PI/2;shadow.scale.set(1,.55,1);shadow.position.y=.02;g.add(shadow);
+
+  g.position.set((Math.random()-.5)*18,0,-26);
+  scene.add(g);
+  enemies.push({mesh:g,elite:true,boss:true,hp:240,max:240,speed:1.22,flash:0});
+}
+
 function spawnEnemy(){
   const elite=Math.random()<Math.min(.08+wave*.012,.25);
   const side=Math.floor(Math.random()*4);
@@ -277,6 +352,9 @@ function updateHud(){
   scoreText.textContent=score;
   waveText.textContent=wave;
   enemiesText.textContent=enemies.length;
+  const boss=enemies.find(e=>e.boss&&e.mesh.visible);
+  bossHud.style.opacity=boss?'1':'0';
+  if(boss)bossFill.style.width=Math.max(0,boss.hp/boss.max*100)+'%';
 }
 
 function announce(text){
@@ -284,16 +362,80 @@ function announce(text){
   waveBanner.style.opacity='1';
   bannerTimer=1.15;
 }
+function updateStorm(dt){
+  storm.timer-=dt;
+  if(!storm.active&&storm.timer<=0){
+    storm.active=true;
+    storm.duration=10+Math.random()*5;
+    storm.lightning=.8;
+    rain.visible=true;
+    stormHud.style.opacity='1';
+    stormOverlay.style.opacity='.42';
+    announce('STORM');
+  }
+  if(storm.active){
+    storm.duration-=dt;
+    rain.position.x=player.position.x;
+    rain.position.z=player.position.z;
+    const pos=rain.geometry.attributes.position.array;
+    for(let i=0;i<rainCount;i++){
+      const j=i*6;
+      pos[j+1]-=26*dt;
+      pos[j+4]-=26*dt;
+      pos[j]+=1.2*dt;
+      pos[j+3]+=1.2*dt;
+      if(pos[j+1]<-.5){
+        const rx=(Math.random()-.5)*96,rz=(Math.random()-.5)*96;
+        pos[j]=rx;pos[j+1]=28+Math.random()*5;pos[j+2]=rz;
+        pos[j+3]=rx+.8;pos[j+4]=pos[j+1]-2.3;pos[j+5]=rz+.6;
+      }
+    }
+    rain.geometry.attributes.position.needsUpdate=true;
+
+    stormLight.intensity=1.0;
+    keyLight.intensity=1.1;
+    cyanLight.intensity=9;
+    storm.lightning-=dt;
+    if(storm.lightning<=0){
+      lightningLight.position.set(
+        player.position.x+(Math.random()-.5)*35,
+        22,
+        player.position.z+(Math.random()-.5)*35
+      );
+      lightningLight.intensity=25;
+      storm.lightning=.15;
+    }else if(lightningLight.intensity>0){
+      lightningLight.intensity=Math.max(0,lightningLight.intensity-dt*120);
+      if(lightningLight.intensity<1)storm.lightning=.7+Math.random()*2.2;
+    }
+    if(storm.duration<=0){
+      storm.active=false;
+      storm.timer=17+Math.random()*15;
+      rain.visible=false;
+      stormHud.style.opacity='0';
+      stormOverlay.style.opacity='0';
+      lightningLight.intensity=0;
+      stormLight.intensity=0;
+      keyLight.intensity=3.2;
+      cyanLight.intensity=18;
+    }
+  }
+}
 
 function reset(){
   if(player)scene.remove(player);
   if(enemies)for(const e of enemies)scene.remove(e.mesh);
   if(bullets)for(const b of bullets)scene.remove(b.mesh);
+  if(enemyBullets)for(const b of enemyBullets)scene.remove(b.mesh);
   if(particles)for(const p of particles)scene.remove(p.mesh);
-  enemies=[];bullets=[];particles=[];
+  enemies=[];bullets=[];enemyBullets=[];particles=[];
   player=makePlayer();player.userData.hp=100;
   player.position.set(0,0,8);
   score=0;wave=1;spawnRemaining=10;spawnTimer=.25;fireTimer=0;gameOver=false;shake=0;bannerTimer=0;
+  bossQueued=false;bossShotTimer=0;
+  storm.active=false;storm.timer=12;storm.duration=0;storm.lightning=1.2;
+  rain.visible=false;stormHud.style.opacity='0';bossHud.style.opacity='0';stormOverlay.style.opacity='0';
+  lightningLight.intensity=0;stormLight.intensity=0;keyLight.intensity=3.2;cyanLight.intensity=18;
   overlay.style.visibility='hidden';
   announce('WAVE 1');
   updateHud();
@@ -304,6 +446,7 @@ reset();
 function update(dt){
   if(gameOver)return;
   const t=Math.min(dt,.033);
+  updateStorm(t);
 
   let mx=(keys.d||keys.arrowright?1:0)-(keys.a||keys.arrowleft?1:0);
   let mz=(keys.s||keys.arrowdown?1:0)-(keys.w||keys.arrowup?1:0);
@@ -326,11 +469,24 @@ function update(dt){
     spawnRemaining--;
     spawnTimer=Math.max(.2,.62-wave*.02);
   }
-  if(spawnRemaining===0&&enemies.length===0){
+  if(spawnRemaining===0&&enemies.length===0&&!bossQueued){
     wave++;
-    spawnRemaining=8+wave*3;
-    spawnTimer=1.15;
-    announce('WAVE '+wave);
+    if(wave%5===0){
+      spawnRemaining=0;
+      bossQueued=true;
+      spawnTimer=1.6;
+      announce('RAID BOSS');
+    }else{
+      spawnRemaining=8+wave*3;
+      spawnTimer=1.15;
+      announce('WAVE '+wave);
+    }
+  }
+  if(bossQueued&&spawnTimer<=0){
+    spawnRaidBoss();
+    bossQueued=false;
+    bossShotTimer=1.2;
+    bossHud.style.opacity='1';
   }
 
   for(const b of bullets){
@@ -345,9 +501,10 @@ function update(dt){
         e.flash=.08;
         spark(b.mesh.position,e.elite?7:5,e.elite?0xff6baa:0xffcf5a);
         if(e.hp<=0){
-          score+=e.elite?90:25;
-          spark(target, e.elite?22:14, e.elite?0xff5fa3:0xffdf65);
+          score+=e.boss?1500:(e.elite?90:25);
+          spark(target,e.boss?40:(e.elite?22:14),e.boss?0xff66ad:(e.elite?0xff5fa3:0xffdf65));
           e.mesh.visible=false;
+          if(e.boss){bossHud.style.opacity='0';announce('BOSS DEFEATED');shake=.45}
         }
       }
     }
@@ -358,29 +515,62 @@ function update(dt){
   });
 
   const ppos=new THREE.Vector3(player.position.x,0,player.position.z);
+  bossShotTimer-=t;
   for(const e of enemies){
     if(!e.mesh.visible)continue;
     const epos=new THREE.Vector3(e.mesh.position.x,0,e.mesh.position.z);
     const d=epos.distanceTo(ppos);
     if(e.flash>0){
       e.flash-=t;
-      e.mesh.scale.setScalar(1.08);
+      e.mesh.scale.setScalar(e.boss?1.04:1.08);
     }else{
       e.mesh.scale.lerp(new THREE.Vector3(1,1,1),.18);
     }
+
     if(d>1.9){
       const dir=ppos.clone().sub(epos).normalize();
-      e.mesh.position.addScaledVector(dir,e.speed*t);
+      e.mesh.position.addScaledVector(dir,(e.boss?e.speed:e.speed)*t);
       e.mesh.rotation.y=Math.atan2(dir.x,dir.z);
     }else{
-      player.userData.hp-=e.elite?24*t:34*t;
-      flash.style.opacity='0.28';
-      shake=.18;
+      player.userData.hp-=e.boss?48*t:(e.elite?24*t:34*t);
+      flash.style.opacity='0.3';
+      shake=e.boss?.23:.18;
+    }
+
+    if(e.boss&&bossShotTimer<=0){
+      const start=new THREE.Vector3(e.mesh.position.x,3,e.mesh.position.z);
+      const target=new THREE.Vector3(player.position.x,1.15,player.position.z);
+      const dir=target.sub(start).normalize();
+      const shot=new THREE.Mesh(new THREE.SphereGeometry(.3,12,12),new THREE.MeshBasicMaterial({color:0xff477f}));
+      shot.position.copy(start);scene.add(shot);
+      enemyBullets.push({mesh:shot,dir,speed:13,life:5});
+      const beam=new THREE.Mesh(new THREE.CylinderGeometry(.04,.04,1.2,8),new THREE.MeshBasicMaterial({color:0xff8bb7,transparent:true,opacity:.75}));
+      beam.quaternion.setFromUnitVectors(new THREE.Vector3(0,1,0),dir);
+      beam.position.copy(start);scene.add(beam);
+      particles.push({mesh:beam,life:.15,v:new THREE.Vector3()});
+      bossShotTimer=1.65;
     }
   }
 
   enemies=enemies.filter(e=>{
     if(!e.mesh.visible){scene.remove(e.mesh);return false}
+    return true;
+  });
+
+  for(const b of enemyBullets){
+    b.mesh.position.addScaledVector(b.dir,b.speed*t);
+    b.life-=t;
+    const pd=b.mesh.position.distanceTo(new THREE.Vector3(player.position.x,1.1,player.position.z));
+    if(pd<1.25){
+      b.life=0;
+      player.userData.hp-=12;
+      flash.style.opacity='0.5';
+      shake=.25;
+      spark(b.mesh.position,8,0xff6b9e);
+    }
+  }
+  enemyBullets=enemyBullets.filter(b=>{
+    if(b.life<=0){scene.remove(b.mesh);return false}
     return true;
   });
 
